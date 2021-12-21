@@ -1,2 +1,5 @@
 pe-parser
 *.o
+target/
+.idea/
+Cargo.lock

@@ -1,0 +1,5 @@
+[package]
+name = "pe-parser"
+version = "0.0.1"
+edition = "2021"
+authors = ["Pavel Grigorenko <311639@niuitmo.ru>"]

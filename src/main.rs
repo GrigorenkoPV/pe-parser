@@ -1,4 +1,4 @@
-use pe_parser::{err_to_string, import_functions, is_pe, read_all};
+use pe_parser::{err_to_string, import_functions, is_pe, read_all, Res};
 use std::{env, fs::File, io, process::exit};
 
 const USAGE: &str = "\
@@ -37,7 +37,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Command {
         .unwrap_or(NoCommand)
 }
 
-fn read_from_file_or_stdin(filepath: Option<String>) -> Result<Vec<u8>, String> {
+fn read_from_file_or_stdin(filepath: Option<String>) -> Res<Vec<u8>> {
     Ok(if let Some(filepath) = filepath {
         read_all(File::open(filepath).map_err(err_to_string)?)?
     } else {
@@ -45,7 +45,7 @@ fn read_from_file_or_stdin(filepath: Option<String>) -> Result<Vec<u8>, String> 
     })
 }
 
-fn run() -> Result<i32, String> {
+fn run() -> Res<i32> {
     match parse_args(env::args()) {
         NoCommand => Err(format!("No command provided.\n{}", USAGE)),
         IsPe { filepath } => {

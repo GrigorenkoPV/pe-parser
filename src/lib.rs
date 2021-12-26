@@ -1,5 +1,7 @@
 use std::io;
 
+pub type Res<T> = Result<T, String>;
+
 const COFF_HEADER_SIZE: usize = 0x18;
 const OPTIONAL_HEADER_SIZE: usize = 0xF0;
 const SECTION_HEADER_SIZE: usize = 40;
@@ -8,7 +10,7 @@ pub fn err_to_string(err: impl std::fmt::Display) -> String {
     format!("{}", err)
 }
 
-pub fn read_all(mut from: impl io::Read) -> Result<Vec<u8>, String> {
+pub fn read_all(mut from: impl io::Read) -> Res<Vec<u8>> {
     let mut result = vec![];
     from.read_to_end(&mut result)
         .map(|_| result)
@@ -38,7 +40,7 @@ pub fn is_pe(data: &[u8]) -> bool {
     strip_pe(data).map(|pe| pe.get(0..4)) == Some(Some(&['P' as u8, 'E' as u8, 0, 0]))
 }
 
-fn get_optional_header(pe: &[u8]) -> Result<Option<&[u8; OPTIONAL_HEADER_SIZE]>, String> {
+fn get_optional_header(pe: &[u8]) -> Res<Option<&[u8; OPTIONAL_HEADER_SIZE]>> {
     let coff_header = get_fixed_subslice::<COFF_HEADER_SIZE>(pe, 0)
         .ok_or("PE part too short to contain a proper COFF Header".to_string())?;
     let size_of_optional_header = get_u16(coff_header, 0x14).unwrap() as usize;
@@ -71,7 +73,7 @@ fn get_section_headers(
     pe: &[u8],
     contains_optional_header: bool,
     number_of_sections: usize,
-) -> Result<Vec<&[u8; SECTION_HEADER_SIZE]>, String> {
+) -> Res<Vec<&[u8; SECTION_HEADER_SIZE]>> {
     let mut result = Vec::with_capacity(number_of_sections);
     for section_number in 0..number_of_sections {
         result.push(
@@ -85,13 +87,16 @@ fn get_section_headers(
                     }
                     + SECTION_HEADER_SIZE * section_number,
             )
-            .ok_or(format!(""))?,
+            .ok_or(format!(
+                "Expected to read {} section headers, but there was enough data only to read {}",
+                number_of_sections, section_number
+            ))?,
         )
     }
     Ok(result)
 }
 
-pub fn import_functions(data: &[u8]) -> Result<(), String> {
+pub fn import_functions(data: &[u8]) -> Res<()> {
     let pe = strip_pe(data).ok_or("File too short to get its [0x3C].. part".to_string())?;
     let optional_header = get_optional_header(pe)?.ok_or("Optional header is empty".to_string())?;
     let import_table_rva = get_u32(optional_header, 0x78).unwrap();

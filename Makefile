@@ -13,7 +13,7 @@ all: pe-parser
 
 clean:
 	cargo clean
-	rm pe-parser
+	-rm pe-parser
 
 .PHONY: all, clean, validation-pe-tests
 

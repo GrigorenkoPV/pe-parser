@@ -5,6 +5,7 @@ pub type Res<T> = Result<T, String>;
 const COFF_HEADER_SIZE: usize = 0x18;
 const OPTIONAL_HEADER_SIZE: usize = 0xF0;
 const SECTION_HEADER_SIZE: usize = 40;
+const IMPORT_TABLE_ENTRY_SIZE: usize = 20;
 
 pub fn err_to_string(err: impl std::fmt::Display) -> String {
     format!("{}", err)
@@ -69,11 +70,43 @@ fn get_optional_header(pe: &[u8]) -> Res<Option<&[u8; OPTIONAL_HEADER_SIZE]>> {
     }
 }
 
+#[allow(dead_code)]
+#[derive(Copy, Clone, Debug)]
+struct SectionHeader {
+    name: [u8; 8],
+    virtual_size: u32,
+    virtual_address: u32,
+    size_of_raw_data: u32,
+    pointer_to_raw_data: u32,
+    pointer_to_relocations: u32,
+    pointer_to_linenumbers: u32,
+    number_of_relocations: u16,
+    number_of_line_numbers: u16,
+    characteristics: u32,
+}
+
+impl From<&[u8; SECTION_HEADER_SIZE]> for SectionHeader {
+    fn from(raw: &[u8; SECTION_HEADER_SIZE]) -> Self {
+        Self {
+            name: *get_fixed_subslice::<8>(raw, 0x00).unwrap(),
+            virtual_size: get_u32(raw, 0x08).unwrap(),
+            virtual_address: get_u32(raw, 0x0c).unwrap(),
+            size_of_raw_data: get_u32(raw, 0x10).unwrap(),
+            pointer_to_raw_data: get_u32(raw, 0x14).unwrap(),
+            pointer_to_relocations: get_u32(raw, 0x18).unwrap(),
+            pointer_to_linenumbers: get_u32(raw, 0x1c).unwrap(),
+            number_of_relocations: get_u16(raw, 0x20).unwrap(),
+            number_of_line_numbers: get_u16(raw, 0x22).unwrap(),
+            characteristics: get_u32(raw, 0x24).unwrap(),
+        }
+    }
+}
+
 fn get_section_headers(
     pe: &[u8],
     contains_optional_header: bool,
     number_of_sections: usize,
-) -> Res<Vec<&[u8; SECTION_HEADER_SIZE]>> {
+) -> Res<Vec<SectionHeader>> {
     let mut result = Vec::with_capacity(number_of_sections);
     for section_number in 0..number_of_sections {
         result.push(
@@ -90,18 +123,77 @@ fn get_section_headers(
             .ok_or(format!(
                 "Expected to read {} section headers, but there was enough data only to read {}",
                 number_of_sections, section_number
-            ))?,
+            ))?
+            .into(),
         )
     }
     Ok(result)
 }
 
-pub fn import_functions(data: &[u8]) -> Res<()> {
+fn rva_to_raw(section_headers: &[SectionHeader], rva: u32) -> Res<usize> {
+    section_headers
+        .into_iter()
+        .find(|section_header| {
+            section_header.virtual_address <= rva
+                && rva < section_header.virtual_address + section_header.virtual_size
+        })
+        .map(|section_header| {
+            (section_header.pointer_to_raw_data + (rva - section_header.virtual_address)) as usize
+        })
+        .ok_or(format!(
+            "Couldn't find the section that would contain rva 0x{:x}",
+            rva
+        ))
+}
+
+fn terminate_by_null(pe: &[u8], start_offset: usize) -> Res<String> {
+    let mut result = vec![];
+    let mut current = start_offset;
+    while let Some(&byte) = pe.get(current) {
+        if byte == 0 {
+            return String::from_utf8(result).map_err(|_| format!("")); //todo
+        } else {
+            result.push(byte);
+            current += 1
+        }
+    }
+    todo!()
+}
+
+pub fn import_functions(data: &[u8]) -> Res<Vec<String>> {
     let pe = strip_pe(data).ok_or("File too short to get its [0x3C].. part".to_string())?;
     let optional_header = get_optional_header(pe)?.ok_or("Optional header is empty".to_string())?;
     let import_table_rva = get_u32(optional_header, 0x78).unwrap();
-    dbg!(import_table_rva);
-    let number_of_sections = get_u16(pe, 0x06).unwrap() as usize;
-    let section_headers = get_section_headers(pe, true, number_of_sections)?;
-    todo!()
+    let import_table_size = get_u32(optional_header, 0x7c).unwrap() as usize;
+    if import_table_size % IMPORT_TABLE_ENTRY_SIZE != 0 {
+        return Err(format!(
+            "Strange import table size ({}), expected it to be divisible by {}",
+            import_table_size, IMPORT_TABLE_ENTRY_SIZE
+        ));
+    }
+    let section_headers = get_section_headers(pe, true, get_u16(pe, 0x06).unwrap() as usize)?;
+    let import_table_raw = rva_to_raw(&section_headers, import_table_rva)?;
+    let import_table = get_subslice(data, import_table_raw as usize, import_table_size as usize)
+        .ok_or(format!(
+            "Expected PE part to be at least {} bytes long \
+                to get the import table starting at 0x{:x}, but it is only {} bytes long",
+            import_table_raw + import_table_size,
+            import_table_raw,
+            pe.len()
+        ))?;
+    let number_of_entries = (import_table_size / 20) as usize;
+    let mut result = Vec::with_capacity(number_of_entries);
+    for entry_number in 0..(number_of_entries - 1) {
+        let entry = get_fixed_subslice::<IMPORT_TABLE_ENTRY_SIZE>(
+            import_table,
+            entry_number * IMPORT_TABLE_ENTRY_SIZE,
+        )
+        .ok_or(format!(""))?; //todo
+        let dll_rva = get_u32(entry, 0x0c).ok_or(format!(""))?; //todo
+        if dll_rva != 0 {
+            let dll_raw = rva_to_raw(&section_headers, dll_rva)?;
+            result.push(terminate_by_null(data, dll_raw)?);
+        }
+    }
+    Ok(result)
 }

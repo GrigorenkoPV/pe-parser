@@ -10,6 +10,8 @@ If no infile provided, reads from stdin.
 Commands:
     is-pe
         Validate the PE signature starting at [0x3C].
+    import-functions
+        Print the list of dll's that the given PE imports
     help, --help, -h
         Display this help message.";
 
@@ -58,7 +60,10 @@ fn run() -> Res<i32> {
             }
         }
         ImportFunctions { filepath } => {
-            import_functions(&read_from_file_or_stdin(filepath)?).map(|_| 0)
+            for entry in import_functions(&read_from_file_or_stdin(filepath)?)? {
+                println!("{}", entry)
+            }
+            Ok(0)
         }
         Help => {
             println!("{}", USAGE);

@@ -13,7 +13,7 @@ all: pe-parser
 
 clean:
 	cargo clean
-	rm pe-parser
+	-rm pe-parser
 
 .PHONY: all, clean, validation-pe-tests
 
@@ -23,3 +23,6 @@ pe-parser:
 
 validation-pe-tests: all
 	python3 -m tests ValidatingPeTestCases -f
+
+import-dll-tests: all
+	python3 -m tests ImportDllTestCases -f

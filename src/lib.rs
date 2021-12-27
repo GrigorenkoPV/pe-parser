@@ -37,8 +37,8 @@ fn strip_pe(data: &[u8]) -> Option<&[u8]> {
         .flatten()
 }
 
-pub fn is_pe(data: &[u8]) -> bool {
-    strip_pe(data).map(|pe| pe.get(0..4)) == Some(Some(&['P' as u8, 'E' as u8, 0, 0]))
+pub fn is_pe(file: &[u8]) -> bool {
+    strip_pe(file).map(|pe| pe.get(0..4)) == Some(Some(&['P' as u8, 'E' as u8, 0, 0]))
 }
 
 fn get_optional_header(pe: &[u8]) -> Res<Option<&[u8; OPTIONAL_HEADER_SIZE]>> {
@@ -150,22 +150,28 @@ fn rva_to_raw(section_headers: &[SectionHeader], rva: u32) -> Res<usize> {
         })
 }
 
-fn terminate_by_null(pe: &[u8], start_offset: usize) -> Res<String> {
+fn terminate_by_null(data: &[u8], start_offset: usize) -> Res<String> {
     let mut result = vec![];
     let mut current = start_offset;
-    while let Some(&byte) = pe.get(current) {
+    while let Some(&byte) = data.get(current) {
         if byte == 0 {
-            return String::from_utf8(result).map_err(|_| format!("")); //todo
+            return String::from_utf8(result)
+                .map_err(|err| format!("Error decoding UTF-8: {}", err));
         } else {
             result.push(byte);
             current += 1
         }
     }
-    todo!()
+    Err(format!(
+        "EOF was reached before it was possible to read a null-terminated string \
+        starting at offset 0x{:08x} ({} bytes read)",
+        start_offset,
+        current - start_offset
+    ))
 }
 
-pub fn import_functions(data: &[u8]) -> Res<Vec<String>> {
-    let pe = strip_pe(data).ok_or_else(|| "File too short to get its [0x3C].. part".to_string())?;
+pub fn import_functions(file: &[u8]) -> Res<Vec<String>> {
+    let pe = strip_pe(file).ok_or_else(|| "File too short to get its [0x3C].. part".to_string())?;
     let optional_header =
         get_optional_header(pe)?.ok_or_else(|| "Optional header is empty".to_string())?;
     let import_table_rva = get_u32(optional_header, 0x78).unwrap();
@@ -176,19 +182,30 @@ pub fn import_functions(data: &[u8]) -> Res<Vec<String>> {
     let mut current_entry_number = 0;
     loop {
         if (current_entry_number + 1) * IMPORT_TABLE_ENTRY_SIZE > import_table_size {
-            return Err(format!("")); //todo
+            return Err(format!(
+                "Reading entry #{} from the import table would exceed size of the table ({} bytes)",
+                current_entry_number, import_table_size
+            ));
         }
         let current_entry = get_fixed_subslice::<IMPORT_TABLE_ENTRY_SIZE>(
-            data,
+            file,
             import_table_raw + current_entry_number * IMPORT_TABLE_ENTRY_SIZE,
         )
-        .ok_or_else(|| format!(""))?; //todo
+        .ok_or_else(|| {
+            format!(
+                "File abruptly ended at 0x{:x} bytes before \
+                it was possible to read import table entry #{} at 0x{:08x}",
+                file.len(),
+                current_entry_number,
+                import_table_size + current_entry_number * IMPORT_TABLE_ENTRY_SIZE
+            )
+        })?;
         if current_entry == &[0u8; IMPORT_TABLE_ENTRY_SIZE] {
-            return Ok(result);
+            break Ok(result);
         }
         let dll_rva = get_u32(current_entry, 0x0c).unwrap();
         let dll_raw = rva_to_raw(&section_headers, dll_rva)?;
-        result.push(terminate_by_null(data, dll_raw)?);
+        result.push(terminate_by_null(file, dll_raw)?);
         current_entry_number += 1;
     }
 }

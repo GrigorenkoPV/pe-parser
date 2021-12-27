@@ -43,7 +43,7 @@ pub fn is_pe(data: &[u8]) -> bool {
 
 fn get_optional_header(pe: &[u8]) -> Res<Option<&[u8; OPTIONAL_HEADER_SIZE]>> {
     let coff_header = get_fixed_subslice::<COFF_HEADER_SIZE>(pe, 0)
-        .ok_or("PE part too short to contain a proper COFF Header".to_string())?;
+        .ok_or_else(|| "PE part too short to contain a proper COFF Header".to_string())?;
     let size_of_optional_header = get_u16(coff_header, 0x14).unwrap() as usize;
     match size_of_optional_header {
         0 => Ok(None),
@@ -120,10 +120,12 @@ fn get_section_headers(
                     }
                     + SECTION_HEADER_SIZE * section_number,
             )
-            .ok_or(format!(
+            .ok_or_else(|| {
+                format!(
                 "Expected to read {} section headers, but there was enough data only to read {}",
                 number_of_sections, section_number
-            ))?
+            )
+            })?
             .into(),
         )
     }
@@ -140,10 +142,12 @@ fn rva_to_raw(section_headers: &[SectionHeader], rva: u32) -> Res<usize> {
         .map(|section_header| {
             (section_header.pointer_to_raw_data + (rva - section_header.virtual_address)) as usize
         })
-        .ok_or(format!(
-            "Couldn't find the section that would contain rva 0x{:x}",
-            rva
-        ))
+        .ok_or_else(|| {
+            format!(
+                "Couldn't find the section that would contain rva 0x{:x}",
+                rva
+            )
+        })
 }
 
 fn terminate_by_null(pe: &[u8], start_offset: usize) -> Res<String> {
@@ -161,39 +165,30 @@ fn terminate_by_null(pe: &[u8], start_offset: usize) -> Res<String> {
 }
 
 pub fn import_functions(data: &[u8]) -> Res<Vec<String>> {
-    let pe = strip_pe(data).ok_or("File too short to get its [0x3C].. part".to_string())?;
-    let optional_header = get_optional_header(pe)?.ok_or("Optional header is empty".to_string())?;
+    let pe = strip_pe(data).ok_or_else(|| "File too short to get its [0x3C].. part".to_string())?;
+    let optional_header =
+        get_optional_header(pe)?.ok_or_else(|| "Optional header is empty".to_string())?;
     let import_table_rva = get_u32(optional_header, 0x78).unwrap();
     let import_table_size = get_u32(optional_header, 0x7c).unwrap() as usize;
-    if import_table_size % IMPORT_TABLE_ENTRY_SIZE != 0 {
-        return Err(format!(
-            "Strange import table size ({}), expected it to be divisible by {}",
-            import_table_size, IMPORT_TABLE_ENTRY_SIZE
-        ));
-    }
     let section_headers = get_section_headers(pe, true, get_u16(pe, 0x06).unwrap() as usize)?;
     let import_table_raw = rva_to_raw(&section_headers, import_table_rva)?;
-    let import_table = get_subslice(data, import_table_raw as usize, import_table_size as usize)
-        .ok_or(format!(
-            "Expected PE part to be at least {} bytes long \
-                to get the import table starting at 0x{:x}, but it is only {} bytes long",
-            import_table_raw + import_table_size,
-            import_table_raw,
-            pe.len()
-        ))?;
-    let number_of_entries = (import_table_size / 20) as usize;
-    let mut result = Vec::with_capacity(number_of_entries);
-    for entry_number in 0..(number_of_entries - 1) {
-        let entry = get_fixed_subslice::<IMPORT_TABLE_ENTRY_SIZE>(
-            import_table,
-            entry_number * IMPORT_TABLE_ENTRY_SIZE,
-        )
-        .ok_or(format!(""))?; //todo
-        let dll_rva = get_u32(entry, 0x0c).ok_or(format!(""))?; //todo
-        if dll_rva != 0 {
-            let dll_raw = rva_to_raw(&section_headers, dll_rva)?;
-            result.push(terminate_by_null(data, dll_raw)?);
+    let mut result = vec![];
+    let mut current_entry_number = 0;
+    loop {
+        if (current_entry_number + 1) * IMPORT_TABLE_ENTRY_SIZE > import_table_size {
+            return Err(format!("")); //todo
         }
+        let current_entry = get_fixed_subslice::<IMPORT_TABLE_ENTRY_SIZE>(
+            data,
+            import_table_raw + current_entry_number * IMPORT_TABLE_ENTRY_SIZE,
+        )
+        .ok_or_else(|| format!(""))?; //todo
+        if current_entry == &[0u8; IMPORT_TABLE_ENTRY_SIZE] {
+            return Ok(result);
+        }
+        let dll_rva = get_u32(current_entry, 0x0c).unwrap();
+        let dll_raw = rva_to_raw(&section_headers, dll_rva)?;
+        result.push(terminate_by_null(data, dll_raw)?);
+        current_entry_number += 1;
     }
-    Ok(result)
 }

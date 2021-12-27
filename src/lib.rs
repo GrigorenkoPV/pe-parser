@@ -8,6 +8,7 @@ const OPTIONAL_HEADER_SIZE: usize = 0xF0;
 const SECTION_HEADER_SIZE: usize = 40;
 const IDT_ENTRY_SIZE: usize = 20;
 const ILT_ENTRY_SIZE: usize = 8;
+const EDT_TABLE_SIZE: usize = 40;
 
 pub fn err_to_string(err: impl std::fmt::Display) -> String {
     format!("{}", err)
@@ -254,4 +255,41 @@ pub fn import_functions(file: &[u8]) -> Res<Vec<(String, Vec<String>)>> {
         rva_to_raw(&section_headers, idt_rva)?,
         idt_size,
     )
+}
+
+pub fn export_functions(file: &[u8]) -> Res<Vec<String>> {
+    let pe = strip_pe(file).ok_or_else(|| "File too short to get its [0x3C].. part".to_string())?;
+    let optional_header =
+        get_optional_header(pe)?.ok_or_else(|| "Optional header is empty".to_string())?;
+    let edt_rva = get_u32(optional_header, 0x70).unwrap();
+    let section_headers = get_section_headers(pe, true, get_u16(pe, 0x06).unwrap() as usize)?;
+    let edt_raw = rva_to_raw(&section_headers, edt_rva)?;
+    let edt = get_fixed_subslice::<EDT_TABLE_SIZE>(file, edt_raw).ok_or_else(|| {
+        format!(
+            "File abruptly ended before it was possible to read export directory table at 0x{:08x}",
+            file.len(),
+        )
+    })?;
+    let number_of_name_pointers = get_u32(edt, 24).unwrap() as usize;
+    let npt_raw = rva_to_raw(&section_headers, get_u32(edt, 32).unwrap())?;
+    let mut result = Vec::with_capacity(number_of_name_pointers);
+    for name_pointer_number in 0..number_of_name_pointers {
+        let name_pointer_rva = get_u32(
+            file,
+            npt_raw + name_pointer_number * std::mem::size_of::<u32>(),
+        )
+        .ok_or_else(|| {
+            format!(
+                "File abruptly ended at 0x{:x} bytes before \
+                it was possible name pointer rva {}/{} at 0x{:08x}",
+                file.len(),
+                name_pointer_number,
+                number_of_name_pointers,
+                npt_raw + name_pointer_number * std::mem::size_of::<u32>(),
+            )
+        })?;
+        let name_pointer_raw = rva_to_raw(&section_headers, name_pointer_rva)?;
+        result.push(read_null_terminated_string(file, name_pointer_raw)?);
+    }
+    Ok(result)
 }

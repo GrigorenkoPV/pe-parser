@@ -60,8 +60,13 @@ fn run() -> Res<i32> {
             }
         }
         ImportFunctions { filepath } => {
-            for entry in import_functions(&read_from_file_or_stdin(filepath)?)? {
-                println!("{}", entry)
+            for (library_name, function_names) in
+                import_functions(&read_from_file_or_stdin(filepath)?)?
+            {
+                println!("{}", library_name);
+                for function_name in function_names {
+                    println!("    {}", function_name);
+                }
             }
             Ok(0)
         }

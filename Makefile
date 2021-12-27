@@ -15,7 +15,7 @@ clean:
 	cargo clean
 	-rm pe-parser
 
-.PHONY: all, clean, validation-pe-tests
+.PHONY: all, clean, validation-pe-tests, import-dll-tests, import-function-tests
 
 pe-parser:
 	cargo build $(CARGO_BUILD_FLAGS)
@@ -26,3 +26,6 @@ validation-pe-tests: all
 
 import-dll-tests: all
 	python3 -m tests ImportDllTestCases -f
+
+import-function-tests: all
+	python3 -m tests ImportFunctionTestCases -f

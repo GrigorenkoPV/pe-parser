@@ -1,4 +1,4 @@
-use pe_parser::{err_to_string, import_functions, is_pe, read_all, Res};
+use pe_parser::{err_to_string, export_functions, import_functions, is_pe, read_all, Res};
 use std::{env, fs::File, io, process::exit};
 
 const USAGE: &str = "\
@@ -11,7 +11,9 @@ Commands:
     is-pe
         Validate the PE signature starting at [0x3C].
     import-functions
-        Print the list of dll's that the given PE imports
+        Print the list of dll's and functions that the given PE imports
+    export-functions
+        Print the list of functions that the given PE exports
     help, --help, -h
         Display this help message.";
 
@@ -19,6 +21,7 @@ enum Command {
     NoCommand,
     IsPe { filepath: Option<String> },
     ImportFunctions { filepath: Option<String> },
+    ExportFunctions { filepath: Option<String> },
     Help,
     Unknown(String),
 }
@@ -31,6 +34,9 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Command {
                 filepath: args.next(),
             },
             "import-functions" => ImportFunctions {
+                filepath: args.next(),
+            },
+            "export-functions" => ExportFunctions {
                 filepath: args.next(),
             },
             "help" | "--help" | "-h" => Help,
@@ -67,6 +73,12 @@ fn run() -> Res<i32> {
                 for function_name in function_names {
                     println!("    {}", function_name);
                 }
+            }
+            Ok(0)
+        }
+        ExportFunctions { filepath } => {
+            for function_name in export_functions(&read_from_file_or_stdin(filepath)?)? {
+                println!("{}", function_name);
             }
             Ok(0)
         }

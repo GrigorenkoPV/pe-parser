@@ -255,3 +255,15 @@ pub fn import_functions(file: &[u8]) -> Res<Vec<(String, Vec<String>)>> {
         idt_size,
     )
 }
+
+pub fn export_functions(file: &[u8]) -> Res<Vec<String>> {
+    let pe = strip_pe(file).ok_or_else(|| "File too short to get its [0x3C].. part".to_string())?;
+    let optional_header =
+        get_optional_header(pe)?.ok_or_else(|| "Optional header is empty".to_string())?;
+    let et_rva = get_u32(optional_header, 0x70).unwrap();
+    let et_size = get_u32(optional_header, 0x74).unwrap() as usize;
+    let section_headers = get_section_headers(pe, true, get_u16(pe, 0x06).unwrap() as usize)?;
+    let et_raw = rva_to_raw(&section_headers, et_rva)?;
+    dbg!(format!("0x{:x}", et_raw));
+    todo!()
+}

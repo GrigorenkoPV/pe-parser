@@ -13,7 +13,7 @@ jobs:
       - name: 'Checkout'
         uses: actions/checkout@v2
       - name: 'Install rust'
-        run: curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
+        run: curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal && source $HOME/.cargo/env
       - name: 'Run tests'
         run: make validation-pe-tests import-dll-tests import-function-tests
   grade-export:
@@ -24,6 +24,6 @@ jobs:
       - name: 'Checkout'
         uses: actions/checkout@v2
       - name: 'Install rust'
-        run: curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
+        run: curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal && source $HOME/.cargo/env
       - name: 'Run tests'
         run: make export-function-tests

@@ -13,9 +13,9 @@ jobs:
       - name: 'Checkout'
         uses: actions/checkout@v2
       - name: 'Install rust'
-        run: curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal && source $HOME/.cargo/env
+        run: curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
       - name: 'Run tests'
-        run: make validation-pe-tests import-dll-tests import-function-tests
+        run: source $HOME/.cargo/env && make validation-pe-tests import-dll-tests import-function-tests
   grade-export:
     runs-on: [self-hosted, os]
     timeout-minutes: 10
@@ -24,6 +24,6 @@ jobs:
       - name: 'Checkout'
         uses: actions/checkout@v2
       - name: 'Install rust'
-        run: curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal && source $HOME/.cargo/env
+        run: curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minima
       - name: 'Run tests'
-        run: make export-function-tests
+        run: source $HOME/.cargo/env && make export-function-tests

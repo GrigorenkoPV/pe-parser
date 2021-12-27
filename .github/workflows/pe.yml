@@ -24,6 +24,6 @@ jobs:
       - name: 'Checkout'
         uses: actions/checkout@v2
       - name: 'Install rust'
-        run: curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minima
+        run: curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
       - name: 'Run tests'
         run: source $HOME/.cargo/env && make export-function-tests

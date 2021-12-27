@@ -26,3 +26,6 @@ validation-pe-tests: all
 
 import-dll-tests: all
 	python3 -m tests ImportDllTestCases -f
+
+import-function-tests: all
+	python3 -m tests ImportFunctionTestCases -f

@@ -170,42 +170,45 @@ fn terminate_by_null(data: &[u8], start_offset: usize) -> Res<String> {
     ))
 }
 
-pub fn import_functions(file: &[u8]) -> Res<Vec<String>> {
+pub fn import_functions(file: &[u8]) -> Res<Vec<(String, Vec<String>)>> {
     let pe = strip_pe(file).ok_or_else(|| "File too short to get its [0x3C].. part".to_string())?;
     let optional_header =
         get_optional_header(pe)?.ok_or_else(|| "Optional header is empty".to_string())?;
-    let import_table_rva = get_u32(optional_header, 0x78).unwrap();
-    let import_table_size = get_u32(optional_header, 0x7c).unwrap() as usize;
+    let idt_rva = get_u32(optional_header, 0x78).unwrap();
+    let idt_size = get_u32(optional_header, 0x7c).unwrap() as usize;
     let section_headers = get_section_headers(pe, true, get_u16(pe, 0x06).unwrap() as usize)?;
-    let import_table_raw = rva_to_raw(&section_headers, import_table_rva)?;
+    let idt_raw = rva_to_raw(&section_headers, idt_rva)?;
     let mut result = vec![];
-    let mut current_entry_number = 0;
+    let mut idt_entry_number = 0;
     loop {
-        if (current_entry_number + 1) * IMPORT_TABLE_ENTRY_SIZE > import_table_size {
+        if (idt_entry_number + 1) * IMPORT_TABLE_ENTRY_SIZE > idt_size {
             return Err(format!(
                 "Reading entry #{} from the import table would exceed size of the table ({} bytes)",
-                current_entry_number, import_table_size
+                idt_entry_number, idt_size
             ));
         }
-        let current_entry = get_fixed_subslice::<IMPORT_TABLE_ENTRY_SIZE>(
+        let idt_entry = get_fixed_subslice::<IMPORT_TABLE_ENTRY_SIZE>(
             file,
-            import_table_raw + current_entry_number * IMPORT_TABLE_ENTRY_SIZE,
+            idt_raw + idt_entry_number * IMPORT_TABLE_ENTRY_SIZE,
         )
         .ok_or_else(|| {
             format!(
                 "File abruptly ended at 0x{:x} bytes before \
                 it was possible to read import table entry #{} at 0x{:08x}",
                 file.len(),
-                current_entry_number,
-                import_table_size + current_entry_number * IMPORT_TABLE_ENTRY_SIZE
+                idt_entry_number,
+                idt_size + idt_entry_number * IMPORT_TABLE_ENTRY_SIZE
             )
         })?;
-        if current_entry == &[0u8; IMPORT_TABLE_ENTRY_SIZE] {
-            break Ok(result);
+        if idt_entry == &[0u8; IMPORT_TABLE_ENTRY_SIZE] {
+            return Ok(result);
         }
-        let dll_rva = get_u32(current_entry, 0x0c).unwrap();
-        let dll_raw = rva_to_raw(&section_headers, dll_rva)?;
-        result.push(terminate_by_null(file, dll_raw)?);
-        current_entry_number += 1;
+        let dll_name_rva = get_u32(idt_entry, 0x0c).unwrap();
+        let dll_name_raw = rva_to_raw(&section_headers, dll_name_rva)?;
+        let dll_name = terminate_by_null(file, dll_name_raw)?;
+        let mut functions = vec![];
+        // todo
+        result.push((dll_name, functions));
+        idt_entry_number += 1;
     }
 }

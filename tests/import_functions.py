@@ -36,12 +36,7 @@ class ImportFunctionTestCases(TestCaseBase):
         )
 
     def test_large_exe(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "test.exe")
-
-            urllib.request.urlretrieve("https://nerc.itmo.ru/teaching/os/pe/test.exe", path)
-            actual = self.run_command(["import-functions", path], 0)
-
+        actual = self.run_command(["import-functions", "./examples/4/4.exe"], 0)
         expected = self.get_answer("tests/3/4")
 
         self.assertDictSame(

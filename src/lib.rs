@@ -150,13 +150,13 @@ fn rva_to_raw(section_headers: &[SectionHeader], rva: u32) -> Result<usize> {
         })
 }
 
-// FIXME: non-mandatory utf-8
 fn read_null_terminated_string(data: &[u8], start_offset: usize) -> Result<String> {
     let mut result = vec![];
     let mut current = start_offset;
     while let Some(&byte) = data.get(current) {
         if byte == 0 {
-            return String::from_utf8(result).context("Error decoding UTF-8");
+            return Ok(String::from_utf8(result)
+                .unwrap_or_else(|_| format!("(non-ut8) {:?}", &data[start_offset..current])));
         } else {
             result.push(byte);
             current += 1

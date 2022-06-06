@@ -8,11 +8,13 @@ mod cli;
 use pe_parser::{export_functions, import_functions, is_pe, read_all};
 
 fn read_from_file_or_stdin(filepath: Option<PathBuf>) -> Result<Vec<u8>> {
-    Ok(if let Some(filepath) = filepath {
-        read_all(File::open(&filepath).with_context(|| format!("Error opening {:?}", filepath))?)?
+    if let Some(filepath) = filepath {
+        let file =
+            File::open(&filepath).with_context(|| format!("Error opening {:?}", filepath))?;
+        read_all(file).with_context(|| format!("Error reading from {:?}", filepath))
     } else {
-        read_all(io::stdin())?
-    })
+        read_all(io::stdin()).context("Error reading from stdin")
+    }
 }
 
 fn run(arguments: cli::Cli) -> Result<i32> {
@@ -28,9 +30,8 @@ fn run(arguments: cli::Cli) -> Result<i32> {
             }
         }
         ImportFunctions { filepath } => {
-            for (library_name, function_names) in
-                import_functions(&read_from_file_or_stdin(filepath)?)?
-            {
+            let result = import_functions(&read_from_file_or_stdin(filepath)?)?;
+            for (library_name, function_names) in result {
                 println!("{}", library_name);
                 for function_name in function_names {
                     println!("    {}", function_name);
@@ -39,7 +40,8 @@ fn run(arguments: cli::Cli) -> Result<i32> {
             Ok(0)
         }
         ExportFunctions { filepath } => {
-            for function_name in export_functions(&read_from_file_or_stdin(filepath)?)? {
+            let result = export_functions(&read_from_file_or_stdin(filepath)?)?;
+            for function_name in result {
                 println!("{}", function_name);
             }
             Ok(0)

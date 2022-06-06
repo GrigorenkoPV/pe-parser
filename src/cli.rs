@@ -16,21 +16,21 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Subcommands {
-    /// TODO: about
+    /// Check that the file has PE magic numbers
     #[clap(name = "is-pe", author, version)]
     IsPe {
         /// Path to PE file (if none, reads from stdin)
         filepath: Option<PathBuf>,
     },
 
-    /// TODO: about
+    /// List out functions imported by a PE
     #[clap(name = "import-functions", author, version)]
     ImportFunctions {
         /// Path to PE file (if none, reads from stdin)
         filepath: Option<PathBuf>,
     },
 
-    /// TODO: about
+    /// List out functions exported by a PE
     #[clap(name = "export-functions", author, version)]
     ExportFunctions {
         /// Path to PE file (if none, reads from stdin)

@@ -1,9 +1,9 @@
 [package]
 name = "pe-parser"
-version = "2.1.0"
+version = "2.1.1"
 edition = "2021"
 authors = ["Pavel Grigorenko <grigorenkopv@ya.ru>"]
-description = "TODO: description"
+description = "A small .EXE & .DLL parser"
 
 [dependencies]
 anyhow = "1.0"

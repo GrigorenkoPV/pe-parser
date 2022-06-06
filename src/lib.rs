@@ -44,7 +44,7 @@ pub fn is_pe(file: &[u8]) -> bool {
 
 fn get_optional_header(pe: &[u8]) -> Result<Option<&[u8; OPTIONAL_HEADER_SIZE]>> {
     let coff_header = get_fixed_subslice::<COFF_HEADER_SIZE>(pe, 0)
-        .context("PE part too short to contain a proper COFF Header")?;
+        .context("PE part is too short to contain a proper COFF Header")?;
     let size_of_optional_header = get_u16(coff_header, 0x14).unwrap() as usize;
     match size_of_optional_header {
         0 => Ok(None),
@@ -122,9 +122,9 @@ fn get_section_headers(
             )
             .with_context(|| {
                 format!(
-                "Expected to read {} section headers, but there was enough data only to read {}",
-                number_of_sections, section_number
-            )
+                    "Expected to read {} section headers, but there was enough data only for {}",
+                    number_of_sections, section_number
+                )
             })?
             .into(),
         )
@@ -150,6 +150,7 @@ fn rva_to_raw(section_headers: &[SectionHeader], rva: u32) -> Result<usize> {
         })
 }
 
+// FIXME: non-mandatory utf-8
 fn read_null_terminated_string(data: &[u8], start_offset: usize) -> Result<String> {
     let mut result = vec![];
     let mut current = start_offset;
@@ -182,10 +183,21 @@ fn parse_ilt(
         }
         if ilt_entry & (1 << 63) == 0 {
             let function_name_rva = ilt_entry as u32;
-            result.push(read_null_terminated_string(
-                file,
-                rva_to_raw(section_headers, function_name_rva)? + 2,
-            )?);
+            let function_name_raw =
+                rva_to_raw(section_headers, function_name_rva).with_context(|| {
+                    format!(
+                        "Error converting function name rva to raw offset for function #{}",
+                        ilt_entry_number
+                    )
+                })?;
+            result.push(
+                read_null_terminated_string(file, function_name_raw + 2).with_context(|| {
+                    format!(
+                        "Error reading function name for function #{}",
+                        ilt_entry_number
+                    )
+                })?,
+            );
         }
         ilt_entry_number += 1;
     }
@@ -230,35 +242,52 @@ fn parse_idt(
         }
         let ilt_rva = get_u32(idt_entry, 0x00).unwrap();
         let dll_name_rva = get_u32(idt_entry, 0x0c).unwrap();
-        let dll_name_raw = rva_to_raw(section_headers, dll_name_rva)?;
+        let dll_name_raw = rva_to_raw(section_headers, dll_name_rva)
+            .context("Error converting dll name rva to raw offset")?;
         result.push((
-            read_null_terminated_string(file, dll_name_raw)?,
-            parse_ilt(file, section_headers, rva_to_raw(section_headers, ilt_rva)?)?,
+            read_null_terminated_string(file, dll_name_raw).context("Error reading dll name")?,
+            parse_ilt(
+                file,
+                section_headers,
+                rva_to_raw(section_headers, ilt_rva)
+                    .context("Error converting ILR rva to raw offset")?,
+            )
+            .context("Error parsing ILT")?,
         ));
         idt_entry_number += 1;
     }
 }
 
 pub fn import_functions(file: &[u8]) -> Result<Vec<(String, Vec<String>)>> {
-    let pe = strip_pe(file).context("File too short to get its [0x3C].. part")?;
-    let optional_header = get_optional_header(pe)?.context("Optional header is empty")?;
+    let pe = strip_pe(file).context("File is too short to get its [0x3C..] part")?;
+    let optional_header = get_optional_header(pe)
+        .context("Error getting the optional header")?
+        .context("Optional header is empty")?;
     let idt_rva = get_u32(optional_header, 0x78).unwrap();
     let idt_size = get_u32(optional_header, 0x7c).unwrap() as usize;
-    let section_headers = get_section_headers(pe, true, get_u16(pe, 0x06).unwrap() as usize)?;
+    let section_headers = get_section_headers(pe, true, get_u16(pe, 0x06).unwrap() as usize)
+        .context("Error getting section headers")?;
     parse_idt(
         file,
         &section_headers,
-        rva_to_raw(&section_headers, idt_rva)?,
+        rva_to_raw(&section_headers, idt_rva).context("Error converting IDT rva to raw offset")?,
         idt_size,
     )
+    .context("Error parsing IDT")
 }
 
 pub fn export_functions(file: &[u8]) -> Result<Vec<String>> {
-    let pe = strip_pe(file).context("File too short to get its [0x3C].. part")?;
-    let optional_header = get_optional_header(pe)?.context("Optional header is empty")?;
+    let pe = strip_pe(file).context("File is too short to get its [0x3C..] part")?;
+    let optional_header = get_optional_header(pe)
+        .context("Error getting the optional header")?
+        .context("Optional header is empty")?;
     let edt_rva = get_u32(optional_header, 0x70).unwrap();
-    let section_headers = get_section_headers(pe, true, get_u16(pe, 0x06).unwrap() as usize)?;
-    let edt_raw = rva_to_raw(&section_headers, edt_rva)?;
+    let section_headers = get_section_headers(pe, true, get_u16(pe, 0x06).unwrap() as usize)
+        .context("Error getting section headers")?;
+    let edt_raw = rva_to_raw(&section_headers, edt_rva).context(
+        "Error converting EDT rva to raw offset. \
+        It may be possible that the given PE doesn't export any functions.",
+    )?;
     let edt = get_fixed_subslice::<EDT_TABLE_SIZE>(file, edt_raw).with_context(|| {
         format!(
             "File abruptly ended before it was possible to read export directory table at 0x{:08x}",
@@ -266,7 +295,8 @@ pub fn export_functions(file: &[u8]) -> Result<Vec<String>> {
         )
     })?;
     let number_of_name_pointers = get_u32(edt, 24).unwrap() as usize;
-    let npt_raw = rva_to_raw(&section_headers, get_u32(edt, 32).unwrap())?;
+    let npt_raw = rva_to_raw(&section_headers, get_u32(edt, 32).unwrap())
+        .context("Error converting Name Pointer Table rva to raw offset")?;
     let mut result = Vec::with_capacity(number_of_name_pointers);
     for name_pointer_number in 0..number_of_name_pointers {
         let name_pointer_rva = get_u32(
@@ -275,16 +305,29 @@ pub fn export_functions(file: &[u8]) -> Result<Vec<String>> {
         )
         .with_context(|| {
             format!(
-                "File abruptly ended at 0x{:x} bytes before \
-                it was possible name pointer rva {}/{} at 0x{:08x}",
+                "File abruptly ended at 0x{:x} bytes, before \
+                it was even possible to read name pointer rva {}/{} at 0x{:08x}",
                 file.len(),
                 name_pointer_number,
                 number_of_name_pointers,
                 npt_raw + name_pointer_number * std::mem::size_of::<u32>(),
             )
         })?;
-        let name_pointer_raw = rva_to_raw(&section_headers, name_pointer_rva)?;
-        result.push(read_null_terminated_string(file, name_pointer_raw)?);
+        let name_pointer_raw =
+            rva_to_raw(&section_headers, name_pointer_rva).with_context(|| {
+                format!(
+                    "Error converting rva to raw offset for name pointer #{}",
+                    name_pointer_number
+                )
+            })?;
+        result.push(
+            read_null_terminated_string(file, name_pointer_raw).with_context(|| {
+                format!(
+                    "Error reading function name for name pointer #{}",
+                    name_pointer_number
+                )
+            })?,
+        );
     }
     Ok(result)
 }

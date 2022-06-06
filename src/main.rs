@@ -1,64 +1,23 @@
-use std::{env, fs::File, io, process::exit};
+use std::{fs::File, io, path::PathBuf, process::exit};
 
-use anyhow::{Error, Result};
+use anyhow::{Context, Result};
+use clap::Parser;
+
+mod cli;
 
 use pe_parser::{export_functions, import_functions, is_pe, read_all};
 
-const USAGE: &str = "\
-Usage:
-    pe-parser <command> [infile]
-
-If no infile provided, reads from stdin.
-
-Commands:
-    is-pe
-        Validate the PE signature starting at [0x3C].
-    import-functions
-        Print the list of dll's and functions that the given PE imports
-    export-functions
-        Print the list of functions that the given PE exports
-    help, --help, -h
-        Display this help message.";
-
-enum Command {
-    NoCommand,
-    IsPe { filepath: Option<String> },
-    ImportFunctions { filepath: Option<String> },
-    ExportFunctions { filepath: Option<String> },
-    Help,
-    Unknown(String),
-}
-use Command::*;
-
-fn parse_args(mut args: impl Iterator<Item = String>) -> Command {
-    args.nth(1)
-        .map(|mode| match &*mode {
-            "is-pe" => IsPe {
-                filepath: args.next(),
-            },
-            "import-functions" => ImportFunctions {
-                filepath: args.next(),
-            },
-            "export-functions" => ExportFunctions {
-                filepath: args.next(),
-            },
-            "help" | "--help" | "-h" => Help,
-            _ => Unknown(mode),
-        })
-        .unwrap_or(NoCommand)
-}
-
-fn read_from_file_or_stdin(filepath: Option<String>) -> Result<Vec<u8>> {
+fn read_from_file_or_stdin(filepath: Option<PathBuf>) -> Result<Vec<u8>> {
     Ok(if let Some(filepath) = filepath {
-        read_all(File::open(filepath)?)?
+        read_all(File::open(&filepath).with_context(|| format!("Error opening {:?}", filepath))?)?
     } else {
         read_all(io::stdin())?
     })
 }
 
-fn run() -> Result<i32> {
-    match parse_args(env::args()) {
-        NoCommand => Err(Error::msg(format!("No command provided.\n{}", USAGE))),
+fn run(arguments: cli::Cli) -> Result<i32> {
+    use cli::Subcommands::*;
+    match arguments.subcommand {
         IsPe { filepath } => {
             if is_pe(&read_from_file_or_stdin(filepath)?) {
                 println!("PE");
@@ -85,19 +44,11 @@ fn run() -> Result<i32> {
             }
             Ok(0)
         }
-        Help => {
-            println!("{}", USAGE);
-            Ok(0)
-        }
-        Unknown(command) => Err(Error::msg(format!(
-            "Unknown command: \"{}\".\n{}",
-            command, USAGE
-        ))),
     }
 }
 
 fn main() -> ! {
-    match run() {
+    match run(cli::Cli::parse()) {
         Ok(return_code) => exit(return_code),
         Err(e) => {
             eprintln!("{:?}", e);

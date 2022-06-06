@@ -1,5 +1,8 @@
-use pe_parser::{err_to_string, export_functions, import_functions, is_pe, read_all, Res};
 use std::{env, fs::File, io, process::exit};
+
+use anyhow::{Error, Result};
+
+use pe_parser::{export_functions, import_functions, is_pe, read_all};
 
 const USAGE: &str = "\
 Usage:
@@ -45,17 +48,17 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Command {
         .unwrap_or(NoCommand)
 }
 
-fn read_from_file_or_stdin(filepath: Option<String>) -> Res<Vec<u8>> {
+fn read_from_file_or_stdin(filepath: Option<String>) -> Result<Vec<u8>> {
     Ok(if let Some(filepath) = filepath {
-        read_all(File::open(filepath).map_err(err_to_string)?)?
+        read_all(File::open(filepath)?)?
     } else {
         read_all(io::stdin())?
     })
 }
 
-fn run() -> Res<i32> {
+fn run() -> Result<i32> {
     match parse_args(env::args()) {
-        NoCommand => Err(format!("No command provided.\n{}", USAGE)),
+        NoCommand => Err(Error::msg(format!("No command provided.\n{}", USAGE))),
         IsPe { filepath } => {
             if is_pe(&read_from_file_or_stdin(filepath)?) {
                 println!("PE");
@@ -86,7 +89,10 @@ fn run() -> Res<i32> {
             println!("{}", USAGE);
             Ok(0)
         }
-        Unknown(command) => Err(format!("Unknown command: \"{}\".\n{}", command, USAGE)),
+        Unknown(command) => Err(Error::msg(format!(
+            "Unknown command: \"{}\".\n{}",
+            command, USAGE
+        ))),
     }
 }
 
@@ -94,7 +100,7 @@ fn main() -> ! {
     match run() {
         Ok(return_code) => exit(return_code),
         Err(e) => {
-            eprintln!("{}", e);
+            eprintln!("{:?}", e);
             exit(-1);
         }
     }

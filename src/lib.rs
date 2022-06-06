@@ -1,7 +1,6 @@
-use std::fmt::Debug;
-use std::io;
+use std::{fmt::Debug, io};
 
-pub type Res<T> = Result<T, String>;
+use anyhow::{Context as _, Error, Result};
 
 const COFF_HEADER_SIZE: usize = 0x18;
 const OPTIONAL_HEADER_SIZE: usize = 0xF0;
@@ -10,15 +9,11 @@ const IDT_ENTRY_SIZE: usize = 20;
 const ILT_ENTRY_SIZE: usize = 8;
 const EDT_TABLE_SIZE: usize = 40;
 
-pub fn err_to_string(err: impl std::fmt::Display) -> String {
-    format!("{}", err)
-}
-
-pub fn read_all(mut from: impl io::Read) -> Res<Vec<u8>> {
+pub fn read_all(mut from: impl io::Read) -> Result<Vec<u8>> {
     let mut result = vec![];
     from.read_to_end(&mut result)
         .map(|_| result)
-        .map_err(err_to_string)
+        .context("Error reading bytes")
 }
 
 fn get_subslice(slice: &[u8], offset: usize, len: usize) -> Option<&[u8]> {
@@ -47,32 +42,31 @@ pub fn is_pe(file: &[u8]) -> bool {
     strip_pe(file).map(|pe| pe.get(0..4)) == Some(Some(&['P' as u8, 'E' as u8, 0, 0]))
 }
 
-fn get_optional_header(pe: &[u8]) -> Res<Option<&[u8; OPTIONAL_HEADER_SIZE]>> {
+fn get_optional_header(pe: &[u8]) -> Result<Option<&[u8; OPTIONAL_HEADER_SIZE]>> {
     let coff_header = get_fixed_subslice::<COFF_HEADER_SIZE>(pe, 0)
-        .ok_or_else(|| "PE part too short to contain a proper COFF Header".to_string())?;
+        .context("PE part too short to contain a proper COFF Header")?;
     let size_of_optional_header = get_u16(coff_header, 0x14).unwrap() as usize;
     match size_of_optional_header {
         0 => Ok(None),
         OPTIONAL_HEADER_SIZE => {
-            match get_fixed_subslice::<OPTIONAL_HEADER_SIZE>(pe, COFF_HEADER_SIZE) {
-                Some(optional_header) => {
-                    if optional_header.get(..2) != Some(&[0x0b, 0x02]) {
-                        Err("Not a PE32+".to_string())
-                    } else {
-                        Ok(Some(optional_header))
-                    }
-                }
-                None => Err(format!(
-                    "Expected optional header to be at least {} bytes long, but found only {}",
-                    OPTIONAL_HEADER_SIZE,
-                    pe.len() - COFF_HEADER_SIZE
-                )),
+            let optional_header = get_fixed_subslice::<OPTIONAL_HEADER_SIZE>(pe, COFF_HEADER_SIZE)
+                .with_context(|| {
+                    format!(
+                        "Expected optional header to be at least {} bytes long, but found only {}",
+                        OPTIONAL_HEADER_SIZE,
+                        pe.len() - COFF_HEADER_SIZE
+                    )
+                })?;
+            if optional_header.get(..2) != Some(&[0x0b, 0x02]) {
+                Err(Error::msg("Not a PE32+"))
+            } else {
+                Ok(Some(optional_header))
             }
         }
-        _ => Err(format!(
+        unexpected => Err(Error::msg(format!(
             "Unexpected size of optional header: {}",
-            size_of_optional_header
-        )),
+            unexpected,
+        ))),
     }
 }
 
@@ -112,7 +106,7 @@ fn get_section_headers(
     pe: &[u8],
     contains_optional_header: bool,
     number_of_sections: usize,
-) -> Res<Vec<SectionHeader>> {
+) -> Result<Vec<SectionHeader>> {
     let mut result = Vec::with_capacity(number_of_sections);
     for section_number in 0..number_of_sections {
         result.push(
@@ -126,7 +120,7 @@ fn get_section_headers(
                     }
                     + SECTION_HEADER_SIZE * section_number,
             )
-            .ok_or_else(|| {
+            .with_context(|| {
                 format!(
                 "Expected to read {} section headers, but there was enough data only to read {}",
                 number_of_sections, section_number
@@ -138,7 +132,7 @@ fn get_section_headers(
     Ok(result)
 }
 
-fn rva_to_raw(section_headers: &[SectionHeader], rva: u32) -> Res<usize> {
+fn rva_to_raw(section_headers: &[SectionHeader], rva: u32) -> Result<usize> {
     section_headers
         .into_iter()
         .find(|section_header| {
@@ -148,7 +142,7 @@ fn rva_to_raw(section_headers: &[SectionHeader], rva: u32) -> Res<usize> {
         .map(|section_header| {
             (section_header.pointer_to_raw_data + (rva - section_header.virtual_address)) as usize
         })
-        .ok_or_else(|| {
+        .with_context(|| {
             format!(
                 "Couldn't find the section that would contain rva 0x{:x}",
                 rva
@@ -156,27 +150,30 @@ fn rva_to_raw(section_headers: &[SectionHeader], rva: u32) -> Res<usize> {
         })
 }
 
-fn read_null_terminated_string(data: &[u8], start_offset: usize) -> Res<String> {
+fn read_null_terminated_string(data: &[u8], start_offset: usize) -> Result<String> {
     let mut result = vec![];
     let mut current = start_offset;
     while let Some(&byte) = data.get(current) {
         if byte == 0 {
-            return String::from_utf8(result)
-                .map_err(|err| format!("Error decoding UTF-8: {}", err));
+            return String::from_utf8(result).context("Error decoding UTF-8");
         } else {
             result.push(byte);
             current += 1
         }
     }
-    Err(format!(
+    Err(Error::msg(format!(
         "EOF was reached before it was possible to read a null-terminated string \
         starting at offset 0x{:08x} ({} bytes read)",
         start_offset,
         current - start_offset
-    ))
+    )))
 }
 
-fn parse_ilt(file: &[u8], section_headers: &[SectionHeader], ilt_raw: usize) -> Res<Vec<String>> {
+fn parse_ilt(
+    file: &[u8],
+    section_headers: &[SectionHeader],
+    ilt_raw: usize,
+) -> Result<Vec<String>> {
     let mut result = vec![];
     let mut ilt_entry_number = 0;
     while let Some(ilt_entry) = get_u64(file, ilt_raw + ilt_entry_number * ILT_ENTRY_SIZE) {
@@ -192,13 +189,13 @@ fn parse_ilt(file: &[u8], section_headers: &[SectionHeader], ilt_raw: usize) -> 
         }
         ilt_entry_number += 1;
     }
-    Err(format!(
+    Err(Error::msg(format!(
         "File abruptly ended at 0x{:x} bytes before it was possible \
         to read import lookup table entry #{} at 0x{:08x}",
         file.len(),
         ilt_entry_number,
         ilt_raw + ilt_entry_number * ILT_ENTRY_SIZE
-    ))
+    )))
 }
 
 fn parse_idt(
@@ -206,20 +203,20 @@ fn parse_idt(
     section_headers: &[SectionHeader],
     idt_raw: usize,
     idt_size: usize,
-) -> Res<Vec<(String, Vec<String>)>> {
+) -> Result<Vec<(String, Vec<String>)>> {
     let mut result = vec![];
     let mut idt_entry_number = 0;
     loop {
         if (idt_entry_number + 1) * IDT_ENTRY_SIZE > idt_size {
-            return Err(format!(
+            return Err(Error::msg(format!(
                 "Reading entry #{} from the import directory table \
                 would exceed the size of the table ({} bytes)",
                 idt_entry_number, idt_size
-            ));
+            )));
         }
         let idt_entry =
             get_fixed_subslice::<IDT_ENTRY_SIZE>(file, idt_raw + idt_entry_number * IDT_ENTRY_SIZE)
-                .ok_or_else(|| {
+                .with_context(|| {
                     format!(
                         "File abruptly ended at 0x{:x} bytes before \
                         it was possible to read import directory table entry #{} at 0x{:08x}",
@@ -242,10 +239,9 @@ fn parse_idt(
     }
 }
 
-pub fn import_functions(file: &[u8]) -> Res<Vec<(String, Vec<String>)>> {
-    let pe = strip_pe(file).ok_or_else(|| "File too short to get its [0x3C].. part".to_string())?;
-    let optional_header =
-        get_optional_header(pe)?.ok_or_else(|| "Optional header is empty".to_string())?;
+pub fn import_functions(file: &[u8]) -> Result<Vec<(String, Vec<String>)>> {
+    let pe = strip_pe(file).context("File too short to get its [0x3C].. part")?;
+    let optional_header = get_optional_header(pe)?.context("Optional header is empty")?;
     let idt_rva = get_u32(optional_header, 0x78).unwrap();
     let idt_size = get_u32(optional_header, 0x7c).unwrap() as usize;
     let section_headers = get_section_headers(pe, true, get_u16(pe, 0x06).unwrap() as usize)?;
@@ -257,14 +253,13 @@ pub fn import_functions(file: &[u8]) -> Res<Vec<(String, Vec<String>)>> {
     )
 }
 
-pub fn export_functions(file: &[u8]) -> Res<Vec<String>> {
-    let pe = strip_pe(file).ok_or_else(|| "File too short to get its [0x3C].. part".to_string())?;
-    let optional_header =
-        get_optional_header(pe)?.ok_or_else(|| "Optional header is empty".to_string())?;
+pub fn export_functions(file: &[u8]) -> Result<Vec<String>> {
+    let pe = strip_pe(file).context("File too short to get its [0x3C].. part")?;
+    let optional_header = get_optional_header(pe)?.context("Optional header is empty")?;
     let edt_rva = get_u32(optional_header, 0x70).unwrap();
     let section_headers = get_section_headers(pe, true, get_u16(pe, 0x06).unwrap() as usize)?;
     let edt_raw = rva_to_raw(&section_headers, edt_rva)?;
-    let edt = get_fixed_subslice::<EDT_TABLE_SIZE>(file, edt_raw).ok_or_else(|| {
+    let edt = get_fixed_subslice::<EDT_TABLE_SIZE>(file, edt_raw).with_context(|| {
         format!(
             "File abruptly ended before it was possible to read export directory table at 0x{:08x}",
             file.len(),
@@ -278,7 +273,7 @@ pub fn export_functions(file: &[u8]) -> Res<Vec<String>> {
             file,
             npt_raw + name_pointer_number * std::mem::size_of::<u32>(),
         )
-        .ok_or_else(|| {
+        .with_context(|| {
             format!(
                 "File abruptly ended at 0x{:x} bytes before \
                 it was possible name pointer rva {}/{} at 0x{:08x}",

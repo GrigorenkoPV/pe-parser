@@ -1,6 +1,6 @@
 use std::{fmt::Debug, io};
 
-use anyhow::{Context as _, Error, Result};
+use anyhow::{anyhow, ensure, Context as _, Error, Result};
 
 const COFF_HEADER_SIZE: usize = 0x18;
 const OPTIONAL_HEADER_SIZE: usize = 0xF0;
@@ -33,11 +33,10 @@ fn get_u64(slice: &[u8], offset: usize) -> Option<u64> {
 }
 
 fn strip_pe(data: &[u8]) -> Option<&[u8]> {
-    get_u32(data, 0x3C)
-        .map(|pe_start| data.get((pe_start as usize)..))
-        .flatten()
+    get_u32(data, 0x3C).and_then(|pe_start| data.get((pe_start as usize)..))
 }
 
+#[allow(clippy::char_lit_as_u8)]
 pub fn is_pe(file: &[u8]) -> bool {
     strip_pe(file).map(|pe| pe.get(0..4)) == Some(Some(&['P' as u8, 'E' as u8, 0, 0]))
 }
@@ -57,16 +56,16 @@ fn get_optional_header(pe: &[u8]) -> Result<Option<&[u8; OPTIONAL_HEADER_SIZE]>>
                         pe.len() - COFF_HEADER_SIZE
                     )
                 })?;
-            if optional_header.get(..2) != Some(&[0x0b, 0x02]) {
-                Err(Error::msg("Not a PE32+"))
-            } else {
-                Ok(Some(optional_header))
-            }
+            ensure!(
+                optional_header.get(..2) == Some(&[0x0b, 0x02]),
+                "Not a PE32+"
+            );
+            Ok(Some(optional_header))
         }
-        unexpected => Err(Error::msg(format!(
+        unexpected => Err(anyhow!(
             "Unexpected size of optional header: {}",
             unexpected,
-        ))),
+        )),
     }
 }
 
@@ -134,7 +133,7 @@ fn get_section_headers(
 
 fn rva_to_raw(section_headers: &[SectionHeader], rva: u32) -> Result<usize> {
     section_headers
-        .into_iter()
+        .iter()
         .find(|section_header| {
             section_header.virtual_address <= rva
                 && rva < section_header.virtual_address + section_header.virtual_size
@@ -162,12 +161,12 @@ fn read_null_terminated_string(data: &[u8], start_offset: usize) -> Result<Strin
             current += 1
         }
     }
-    Err(Error::msg(format!(
+    Err(anyhow!(
         "EOF was reached before it was possible to read a null-terminated string \
         starting at offset 0x{:08x} ({} bytes read)",
         start_offset,
         current - start_offset
-    )))
+    ))
 }
 
 fn parse_ilt(
@@ -219,13 +218,13 @@ fn parse_idt(
     let mut result = vec![];
     let mut idt_entry_number = 0;
     loop {
-        if (idt_entry_number + 1) * IDT_ENTRY_SIZE > idt_size {
-            return Err(Error::msg(format!(
-                "Reading entry #{} from the import directory table \
-                would exceed the size of the table ({} bytes)",
-                idt_entry_number, idt_size
-            )));
-        }
+        ensure!(
+            (idt_entry_number + 1) * IDT_ENTRY_SIZE <= idt_size,
+            "Reading entry #{} from the import directory table \
+            would exceed the size of the table ({} bytes)",
+            idt_entry_number,
+            idt_size
+        );
         let idt_entry =
             get_fixed_subslice::<IDT_ENTRY_SIZE>(file, idt_raw + idt_entry_number * IDT_ENTRY_SIZE)
                 .with_context(|| {

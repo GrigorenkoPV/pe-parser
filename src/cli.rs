@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[clap(author, version, about)]
-#[clap(
+#[command(author, version, about)]
+#[command(
     help_expected = true,
     propagate_version = true,
     arg_required_else_help = true
@@ -17,21 +17,21 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Subcommands {
     /// Check that the file has PE magic numbers
-    #[clap(name = "is-pe", author, version)]
+    #[command(name = "is-pe", author, version)]
     IsPe {
         /// Path to PE file (if none, reads from stdin)
         filepath: Option<PathBuf>,
     },
 
     /// List out functions imported by a PE
-    #[clap(name = "import-functions", author, version)]
+    #[command(name = "import-functions", author, version)]
     ImportFunctions {
         /// Path to PE file (if none, reads from stdin)
         filepath: Option<PathBuf>,
     },
 
     /// List out functions exported by a PE
-    #[clap(name = "export-functions", author, version)]
+    #[command(name = "export-functions", author, version)]
     ExportFunctions {
         /// Path to PE file (if none, reads from stdin)
         filepath: Option<PathBuf>,
@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn verify_cli() {
-        use clap::IntoApp;
+        use clap::CommandFactory;
         Cli::command().debug_assert();
     }
 }

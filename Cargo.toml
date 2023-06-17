@@ -1,10 +1,30 @@
 [package]
 name = "pe-parser"
-version = "2.1.1"
+version = "2.1.2"
 edition = "2021"
 authors = ["Pavel Grigorenko <grigorenkopv@ya.ru>"]
 description = "A small .EXE & .DLL parser"
 
 [dependencies]
 anyhow = "1.0"
-clap = { version = "3.1", features = ["derive"] }
+
+[dependencies.clap]
+version = "4.3"
+default-features = false
+features = [
+    "std",        # We're not a no-std project.
+    "deprecated", # Enable deprecation warnings.
+
+    "derive", # Yes, please.
+    "cargo",  # Allows to fetch project version from Cargo.
+
+    "help",        # Yes to help messages.
+    "usage",       # Yes to the usage examples.
+    "suggestions", # Be helpful in case of typos. Seems to imply the "error-context" feature
+
+    "color",     # Actually just bold & and underline.
+    "wrap_help", # Why not?
+]
+
+[profile.release]
+lto = true
